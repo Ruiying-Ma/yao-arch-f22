@@ -1,0 +1,179 @@
+diff -Nur ./lab2/rv5s_hz/rv5s_hz.h ./Ripes/src/processors/RISC-V/rv5s_hz/rv5s_hz.h
+--- ./lab2/rv5s_hz/rv5s_hz.h	2022-11-16 12:31:10.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_hz/rv5s_hz.h	2022-11-13 22:42:13.192203909 +0800
+@@ -151,7 +151,7 @@
+         // ----------------- Part 4. TODO: modify PC4 source when using branch prediction ----------------
+         // Hint: After you implement branch prediction, the PC4 source of pc_src_id should be changed.
+         //       Think about why and how to change the PC4 source.
+-        pc_4->out >> pc_src_id->get(PcSrcBranch::PC4);
++        ifid_reg->pc4_out >> pc_src_id->get(PcSrcBranch::PC4); // at id stage, the PC4 is the PC+4 of the predicted instruction. We should change it to the ID/EX.PC4
+         branch->target_address >> pc_src_id->get(PcSrcBranch::BRANCH);
+         branch->branch_actual_select >> pc_src_id->select;
+ 
+@@ -165,6 +165,7 @@
+         branch->target_address >> branch_target_buffer->target_address_update;
+ 
+         pc_src_id->out >> pc_src->get(PcSrcFinal::ACTUAL);
++        pc_reg->out >> branch->predicted_pc;
+         branch->branch_final_select >> pc_src->select;
+ 
+         // -----------------------------------------------------------------------
+diff -Nur ./lab2/rv5s_hz/rv_branch_id.h ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_id.h
+--- ./lab2/rv5s_hz/rv_branch_id.h	2022-11-16 12:31:10.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_id.h	2022-11-13 22:43:15.777549231 +0800
+@@ -31,7 +31,11 @@
+ 
+         branch_final_select << [=] {
+             // ------------------ Part 4. TODO: implement selection of the final source of pc -------------------
+-            return PcSrcFinal::ACTUAL;
++            //return PcSrcFinal::ACTUAL;
++            if (wrongPredictPc()) {
++                return PcSrcFinal::ACTUAL;
++            }
++            return PcSrcFinal::PREDICT;
+         };
+ 
+         should_update << [=] {
+@@ -49,6 +53,7 @@
+     INPUTPORT(pc_value, RV_REG_WIDTH); // pc_value: the value of pc register.
+     INPUTPORT(offset_value, RV_REG_WIDTH); // offset_value: the offset to generated the branch target address.
+     INPUTPORT(instr, RV_INSTR_WIDTH); // instr: the instruction.
++    INPUTPORT(predicted_pc, RV_REG_WIDTH); // pc4: the predicted instruction's address
+ 
+     OUTPUTPORT(should_update, 1); // should_update: whether we should update predictor or BTB.
+     OUTPUTPORT(taken, 1); // taken: the actual result of the branch instruction (0: not taken. 1: taken).
+@@ -78,7 +83,17 @@
+     bool wrongPredictPc() {
+         // ------------------ Part 4. TODO: decide whether the predict result is wrong -------------------
+         // Hint: You may need to add some input ports to decide whether the prediction is wrong.
+-        return branchTaken();
++        const unsigned l7 = instr.uValue() & 0b1111111;
++        if (l7 == 0b1101111 || l7 == 0b1100111 || l7 == 0b1100011) { // if a branch/jump instr
++            if (branchTaken()) {
++                return predicted_pc.uValue() != computeTargetAddress();
++            } else {
++                return predicted_pc.uValue() != pc_value.uValue() + 4;
++            }
++        } else { // if not a branch/jmp instr
++            return 0;
++        }
++        //return branchTaken();
+     }
+ 
+     VSRTL_VT_U computeTargetAddress() {
+diff -Nur ./lab2/rv5s_hz/rv_branch_predictor.h ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_predictor.h
+--- ./lab2/rv5s_hz/rv_branch_predictor.h	2022-11-16 12:31:10.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_predictor.h	2022-11-16 11:50:59.230625868 +0800
+@@ -32,7 +32,7 @@
+         };
+ 
+         // --------------------------- Part 4. TODO: initialize the branch history table here if you need to ---------------------------
+-
++        memset(BHT,0,sizeof(BHT));
+ 
+         update_wire->out << [=] {
+             // Not branch instructions.
+@@ -43,6 +43,20 @@
+                 return 1;
+ 
+             // --------------------------- Part 4. TODO: update branch history table here ---------------------------
++            if(should_update.uValue()) {
++                const unsigned addr_update = branch_address_update.uValue();
++                //int row = (int) ((addr_update >> 16) & 0x0000ffff);
++                int col = (int) (addr_update & 0x0000ffff);
++                if(branch_result_update.uValue()) {
++                    if( BHT[col] < 3 ) {
++                        BHT[col] += 1;
++                    }
++                } else {
++                    if(BHT[col] > 0){
++                        BHT[col] -= 1;
++                    }
++                }
++            }
+             return 1;
+         };
+ 
+@@ -70,6 +84,7 @@
+         // This function is called when click the 'reset' button in Ripes. You may need to do things such as clearing
+         // the tables.
+         // If you do not need to reset the table, you can leave this function empty.
++        memset(BHT,0,sizeof(BHT));
+         return;
+     }
+ 
+@@ -80,12 +95,22 @@
+         }
+ 
+         // --------------------------- Part 4. TODO: implement branch predict policy ---------------------------
+-        return 1;
++        const unsigned addr = branch_address.uValue();
++        //int row = (int) ((addr >> 16) & 0x0000ffff);
++        int col = (int) (addr & 0x0000ffff);
++        if (BHT[col] > 1){
++            return 1;
++        } else {
++            return 0;
++        }
++        //return 1;
+     }
+ 
+ 
+     // --------------------------- Part 4. TODO: define your branch history table here ---------------------------
+     // Hint: You may need to add some input ports to get the data used to update the branch history.
++    //int BHT[1<<16][1<<16];
++    int BHT[1<<16];
+ 
+ 
+ };
+diff -Nur ./lab2/rv5s_hz/rv_branch_target_buffer.h ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_target_buffer.h
+--- ./lab2/rv5s_hz/rv_branch_target_buffer.h	2022-11-16 12:31:10.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_hz/rv_branch_target_buffer.h	2022-11-16 11:50:30.694018032 +0800
+@@ -20,11 +20,15 @@
+ 
+         target_address << [=] {
+             // --------------------------- Part 4. TODO: implement BTB policy ---------------------------
+-            return branch_address.uValue() + 4;
++            const unsigned addr = branch_address.uValue();
++            //int row = (int) ((addr >> 16) & 0x0000ffff);
++            int col = (int) (addr & 0x0000ffff);
++            return BTB[col];
++            //return branch_address.uValue() + 4;
+         };
+ 
+         // --------------------------- Part 4. TODO: initialize the BTB here if you need to ---------------------------
+-
++        memset(BTB,0,sizeof(BTB));
+ 
+         update_wire->out << [=] {
+             // Not branch instructions.
+@@ -35,6 +39,12 @@
+                 return 1;
+ 
+             // --------------------------- Part 4. TODO: update BTB here ---------------------------
++            if (should_update.uValue()) {
++                const unsigned addr_update = branch_address_update.uValue();
++                //int row = (int) ((addr_update >> 16) & 0x0000ffff);
++                int col = (int) (addr_update & 0x0000ffff);
++                BTB[col] = target_address_update.uValue();
++            }
+             return 1;
+         };
+ 
+@@ -61,6 +71,7 @@
+         // This function is called when click the 'reset' button in Ripes. You may need to do things such as clearing
+         // the tables.
+         // If you do not need to reset the table, you can leave this function empty.
++        memset(BTB,0,sizeof(BTB));
+         return;
+     }
+ private:
+@@ -68,6 +79,8 @@
+     // --------------------------- Part 4. TODO: put your BTB data structure here ---------------------------
+     // Hint: For example: use a map<branch address, target address>
+     // Hint: You may need to add some input ports to get the data used to update the branch history.
++    //VSRTL_VT_U BTB[1<<16][1<<16];
++    VSRTL_VT_U BTB[1<<16];
+ };
+ 
+ }  // namespace core

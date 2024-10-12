@@ -1,0 +1,366 @@
+diff -Nur ./lab2/rv5s_eb/rv5s_eb_forwardingunit.h ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb_forwardingunit.h
+--- ./lab2/rv5s_eb/rv5s_eb_forwardingunit.h	2022-11-16 12:43:48.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb_forwardingunit.h	2022-11-16 12:42:31.131486357 +0800
+@@ -13,6 +13,13 @@
+   ForwardingEBUnit(const std::string &name, SimComponent *parent)
+       : Component(name, parent) {
+     alu_reg1_forwarding_ctrl << [=] {
++      if (ex_opcode.uValue() == RVInstr::JAL || ex_opcode.uValue() == RVInstr::JALR ||
++          ex_opcode.uValue() == RVInstr::BEQ || ex_opcode.uValue() == RVInstr::BNE ||
++          ex_opcode.uValue() == RVInstr::BLT || ex_opcode.uValue() == RVInstr::BGE ||
++          ex_opcode.uValue() == RVInstr::BLTU ||
++          ex_opcode.uValue() == RVInstr::BGEU) {
++        return ForwardingSrc::IdStage;
++      }
+       const auto idx = id_reg1_idx.uValue();
+       if (idx == 0) {
+         return ForwardingSrc::IdStage;
+@@ -26,6 +33,13 @@
+     };
+ 
+     alu_reg2_forwarding_ctrl << [=] {
++      if (ex_opcode.uValue() == RVInstr::JAL || ex_opcode.uValue() == RVInstr::JALR ||
++          ex_opcode.uValue() == RVInstr::BEQ || ex_opcode.uValue() == RVInstr::BNE ||
++          ex_opcode.uValue() == RVInstr::BLT || ex_opcode.uValue() == RVInstr::BGE ||
++          ex_opcode.uValue() == RVInstr::BLTU ||
++          ex_opcode.uValue() == RVInstr::BGEU) {
++        return ForwardingSrc::IdStage;
++      }
+       const auto idx = id_reg2_idx.uValue();
+       if (idx == 0) {
+         return ForwardingSrc::IdStage;
+@@ -37,17 +51,58 @@
+         return ForwardingSrc::IdStage;
+       }
+     };
+-
+     //---------------Part 2, TODO: implement earlier branch resolving ----------
+     // Hint: forwarding logic like above
+     // you can add/remove ports
++    br_reg1_forwarding_ctrl << [=] {
++      if (id_opcode.uValue() == RVInstr::JAL || id_opcode.uValue() == RVInstr::JALR ||
++          id_opcode.uValue() == RVInstr::BEQ || id_opcode.uValue() == RVInstr::BNE ||
++          id_opcode.uValue() == RVInstr::BLT || id_opcode.uValue() == RVInstr::BGE ||
++          id_opcode.uValue() == RVInstr::BLTU ||
++          id_opcode.uValue() == RVInstr::BGEU) {
++        const auto idx = br_id_reg1_idx.uValue();
++        if(idx == 0){
++          return ForwardingSrc::IdStage;
++        } else if (idx == mem_reg_wr_idx.uValue() && (mem_reg_wr_en.uValue() && !mem_mem_do_read.uValue()) ){
++          return ForwardingSrc::MemStage;
++        } else if (idx == mem_reg_wr_idx.uValue() && mem_reg_wr_en.uValue()){
++          return ForwardingSrc::WbStage;
++        } else {
++          return ForwardingSrc::IdStage;
++        }
++      }
++      else{
++        return ForwardingSrc::IdStage;
++      }
++    };
++
++    br_reg2_forwarding_ctrl << [=] {
++      if (id_opcode.uValue() == RVInstr::BEQ || id_opcode.uValue() == RVInstr::BNE ||
++          id_opcode.uValue() == RVInstr::BLT || id_opcode.uValue() == RVInstr::BGE ||
++          id_opcode.uValue() == RVInstr::BLTU ||
++          id_opcode.uValue() == RVInstr::BGEU) {
++        const auto idx = br_id_reg2_idx.uValue();
++        if (idx == 0) {
++          return ForwardingSrc::IdStage;
++        } else if (idx == mem_reg_wr_idx.uValue() &&
++                   (mem_reg_wr_en.uValue() && !mem_mem_do_read.uValue())) {
++          return ForwardingSrc::MemStage;
++        } else if (idx == mem_reg_wr_idx.uValue() && mem_reg_wr_en.uValue()) {
++          return ForwardingSrc::WbStage;
++        } else {
++          return ForwardingSrc::IdStage;
++        }
++      } else {
++        return ForwardingSrc::IdStage;
++      }
++    };
+   }
+ 
+   INPUTPORT(id_reg1_idx, c_RVRegsBits);
+   INPUTPORT(id_reg2_idx, c_RVRegsBits);
+ 
+-  INPUTPORT(id_br_reg1_idx, c_RVRegsBits);
+-  INPUTPORT(id_br_reg2_idx, c_RVRegsBits);
++  //INPUTPORT(id_br_reg1_idx, c_RVRegsBits);
++  //INPUTPORT(id_br_reg2_idx, c_RVRegsBits);
+ 
+   INPUTPORT(mem_reg_wr_idx, c_RVRegsBits);
+   INPUTPORT(mem_reg_wr_en, 1);
+@@ -55,6 +110,15 @@
+   INPUTPORT(wb_reg_wr_idx, c_RVRegsBits);
+   INPUTPORT(wb_reg_wr_en, 1);
+ 
++
++  INPUTPORT(br_id_reg1_idx, c_RVRegsBits);
++  INPUTPORT(br_id_reg2_idx, c_RVRegsBits);
++
++  INPUTPORT(mem_mem_do_read, 1);
++
++  INPUTPORT_ENUM(id_opcode, RVInstr);
++  INPUTPORT_ENUM(ex_opcode, RVInstr);
++
+   OUTPUTPORT_ENUM(alu_reg1_forwarding_ctrl, ForwardingSrc);
+   OUTPUTPORT_ENUM(alu_reg2_forwarding_ctrl, ForwardingSrc);
+   OUTPUTPORT_ENUM(br_reg1_forwarding_ctrl, ForwardingSrc);
+diff -Nur ./lab2/rv5s_eb/rv5s_eb.h ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb.h
+--- ./lab2/rv5s_eb/rv5s_eb.h	2022-11-16 12:43:48.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb.h	2022-11-16 12:42:31.131486357 +0800
+@@ -68,12 +68,17 @@
+     // signal from the controlflow OR gate. PcSrc enum values must adhere to the
+     // boolean 0/1 values.
+     controlflow_or->out >> pc_src->select;
++    controlflow_or->out >> *controlflow_and->in[0];
++    br_hz_not->out >> *controlflow_and->in[1];
+ 
+-    controlflow_or->out >> *efsc_or->in[0];
++    controlflow_and->out >> *efsc_or->in[0];
+     ecallChecker->syscallExit >> *efsc_or->in[1];
+ 
+-    efsc_or->out >> *efschz_or->in[0];
+-    hzunit->hazardIDEXClear >> *efschz_or->in[1];
++    //efsc_or->out >> *efschz_or->in[0]; // efshz_or is not declared here, use schz_or instead
++    //hzunit->hazardIDEXClear >> *efschz_or->in[1];// efshz_or is not declared here, use schz_or instead
++    //TODO: schz.or
++    ecallChecker->syscallExit >> *schz_or->in[0];
++    hzunit->hazardIDEXClear >> *schz_or->in[1];
+ 
+     // -----------------------------------------------------------------------
+     // Instruction memory
+@@ -116,15 +121,20 @@
+     reg2_br_fw_src->out >> branch->op2;
+ 
+     branch->res >> *br_and->in[0];
+-    idex_reg->do_br_out >> *br_and->in[1];
++    control->do_branch >> *br_and->in[1];
+     br_and->out >> *controlflow_or->in[0];
+-    idex_reg->do_jmp_out >> *controlflow_or->in[1];
++    control->do_jump >> *controlflow_or->in[1];
+     // Hint: you should utilize the one output port of hazard unit
++    hzunit->controlflowHazard >> *br_hz_not->in[0]; 
+ 
+     // Hint: the pc update logic could be written here
+     // Hint: you may use pc_br of type BranchDst
++    ifid_reg->pc_out >> pc_br->pc_reg;
++    reg1_br_fw_src->out >> pc_br->r1_reg;
++    immediate->imm >> pc_br->imm;
++    decode->opcode >> pc_br->opcode;
+     pc_4->out >> pc_src->get(PcSrc::PC4);
+-    alu->res >> pc_src->get(PcSrc::ALU);
++    pc_br->res >> pc_src->get(PcSrc::ALU);
+ 
+     // -----------------------------------------------------------------------
+     // ALU
+@@ -143,6 +153,14 @@
+     //---------------Part 2, TODO: implement earlier branch resolving ----------
+     // Forwarding multiplexers for destination ID
+     // Hint: about reg1/reg2_br_fw_src and funit
++    registerFile->r1_out >> reg1_br_fw_src->get(ForwardingSrc::IdStage);
++    registerFile->r2_out >> reg2_br_fw_src->get(ForwardingSrc::IdStage);
++    exmem_reg->alures_out >> reg1_br_fw_src->get(ForwardingSrc::MemStage);
++    exmem_reg->alures_out >> reg2_br_fw_src->get(ForwardingSrc::MemStage);
++    reg_wr_src->out >> reg1_br_fw_src->get(ForwardingSrc::WbStage);
++    reg_wr_src->out >> reg2_br_fw_src->get(ForwardingSrc::WbStage);
++    funit->br_reg1_forwarding_ctrl >> reg1_br_fw_src->select;
++    funit->br_reg2_forwarding_ctrl >> reg2_br_fw_src->select;
+ 
+     //--------------------------------------------------------------------------
+     // ALU operand multiplexers
+@@ -191,8 +209,7 @@
+     // ID/EX
+     hzunit->hazardIDEXEnable >> idex_reg->enable;
+     hzunit->hazardIDEXClear >> idex_reg->stalled_in;
+-    efschz_or->out >> idex_reg->clear;
+-
++    schz_or->out >> idex_reg->clear;
+     // Data
+     ifid_reg->pc4_out >> idex_reg->pc4_in;
+     ifid_reg->pc_out >> idex_reg->pc_in;
+@@ -272,19 +289,32 @@
+     memwb_reg->wr_reg_idx_out >> funit->wb_reg_wr_idx;
+     memwb_reg->reg_do_write_out >> funit->wb_reg_wr_en;
+ 
++    decode->r1_reg_idx >> funit->br_id_reg1_idx;
++    decode->r2_reg_idx >> funit->br_id_reg2_idx;
++
++    exmem_reg->mem_do_read_out >> funit->mem_mem_do_read;
++
++    decode->opcode >> funit->id_opcode;
++    idex_reg->opcode_out >> funit->ex_opcode;
++
+     //---------------Part 2, TODO: implement earlier branch resolving ----------
+     // Hazard detection unit
+     decode->r1_reg_idx >> hzunit->id_reg1_idx;
+     decode->r2_reg_idx >> hzunit->id_reg2_idx;
+ 
+-    idex_reg->mem_do_read_out >> hzunit->ex_do_mem_read_en;
+     idex_reg->wr_reg_idx_out >> hzunit->ex_reg_wr_idx;
++    idex_reg->mem_do_read_out >> hzunit->ex_do_mem_read_en;
++    idex_reg->reg_do_write_out >> hzunit->ex_do_reg_write;
+ 
++    exmem_reg->wr_reg_idx_out >> hzunit->mem_reg_wr_idx;
++    exmem_reg->mem_do_read_out >> hzunit->mem_do_mem_read_en;
+     exmem_reg->reg_do_write_out >> hzunit->mem_do_reg_write;
+ 
++    memwb_reg->wr_reg_idx_out >> hzunit->wb_reg_wr_idx;
+     memwb_reg->reg_do_write_out >> hzunit->wb_do_reg_write;
+ 
+-    idex_reg->opcode_out >> hzunit->opcode;
++    idex_reg->opcode_out >> hzunit->ex_opcode;
++    decode->opcode >> hzunit->id_opcode;
+   }
+ 
+   // Design subcomponents
+diff -Nur ./lab2/rv5s_eb/rv5s_eb_hazardunit.h ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb_hazardunit.h
+--- ./lab2/rv5s_eb/rv5s_eb_hazardunit.h	2022-11-16 12:43:48.000000000 +0800
++++ ./Ripes/src/processors/RISC-V/rv5s_eb/rv5s_eb_hazardunit.h	2022-11-16 12:42:31.131486357 +0800
+@@ -17,11 +17,20 @@
+ public:
+   HazardEBUnit(const std::string &name, SimComponent *parent)
+       : Component(name, parent) {
++    /*
+     hazardFEEnable << [=] { return !hasHazard(); };
+     hazardIDEXEnable << [=] { return !hasEcallHazard(); };
+     hazardEXMEMClear << [=] { return hasEcallHazard(); };
+     hazardIDEXClear << [=] { return hasLoadEXUseHazard(); };
+     stallEcallHandling << [=] { return hasEcallHazard(); };
++    */
++
++    hazardFEEnable << [=] {return !(hasLoadUseHazard() || hasBranchHazard() || hasJumpHazard() || hasEcallHazard()); };
++    hazardIDEXEnable << [=] {return !hasEcallHazard(); };
++    hazardIDEXClear << [=] {return (hasLoadUseHazard() ||hasBranchHazard() || hasJumpHazard()); };
++    hazardEXMEMClear << [=] {return hasEcallHazard(); };
++    stallEcallHandling << [=] {return hasEcallHazard(); };
++    controlflowHazard << [=] {return hasBranchHazard() || hasJumpHazard(); };
+   }
+ 
+   INPUTPORT(id_reg1_idx, c_RVRegsBits);
+@@ -29,33 +38,42 @@
+ 
+   INPUTPORT(ex_reg_wr_idx, c_RVRegsBits);
+   INPUTPORT(ex_do_mem_read_en, 1);
++  INPUTPORT(ex_do_reg_write, 1);
+ 
++  INPUTPORT(mem_reg_wr_idx, c_RVRegsBits);
++  INPUTPORT(mem_do_mem_read_en, 1);
+   INPUTPORT(mem_do_reg_write, 1);
+ 
++  INPUTPORT(wb_reg_wr_idx, c_RVRegsBits);
+   INPUTPORT(wb_do_reg_write, 1);
+ 
+-  INPUTPORT_ENUM(opcode, RVInstr);
++  INPUTPORT_ENUM(ex_opcode, RVInstr);
++  INPUTPORT_ENUM(id_opcode, RVInstr);
+ 
+   // Hazard Front End enable: Low when stalling the front end (shall be
+-  // connected to a register 'enable' input port). The
++  // connected to a register 'enable' input port). 
+   OUTPUTPORT(hazardFEEnable, 1);
+ 
+   // Hazard IDEX enable: Low when stalling due to an ECALL hazard
+   OUTPUTPORT(hazardIDEXEnable, 1);
++  // IDEX clear: High when a load-use/branch/jump (branch/jump hz = alures hz) hazard is detected
++  OUTPUTPORT(hazardIDEXClear, 1);
+ 
+   // EXMEM clear: High when an ECALL hazard is detected
+   OUTPUTPORT(hazardEXMEMClear, 1);
+-  // IDEX clear: High when a alures/load-use hazard is detected
+-  OUTPUTPORT(hazardIDEXClear, 1);
+ 
+   // Stall Ecall Handling: High whenever we are about to handle an ecall, but
+   // have outstanding writes in the pipeline which must be comitted to the
+   // register file before handling the ecall.
+   OUTPUTPORT(stallEcallHandling, 1);
+ 
++  //
++  OUTPUTPORT(controlflowHazard, 1);
++
+ private:
+-  bool hasHazard() { return hasLoadEXUseHazard() || hasEcallHazard(); }
++  //bool hasHazard() { return hasLoadEXUseHazard() || hasEcallHazard(); }
+ 
++  /*
+   bool hasLoadEXUseHazard() const {
+     const unsigned exidx = ex_reg_wr_idx.uValue();
+     const unsigned idx1 = id_reg1_idx.uValue();
+@@ -63,6 +81,67 @@
+     const bool mrd = ex_do_mem_read_en.uValue();
+ 
+     return (exidx == idx1 || exidx == idx2) && mrd;
++  }*/
++
++  bool hasLoadUseHazard() const{
++    if (id_opcode.uValue() == RVInstr::JAL ||
++        id_opcode.uValue() == RVInstr::JALR ||
++        id_opcode.uValue() == RVInstr::BEQ ||
++        id_opcode.uValue() == RVInstr::BNE ||
++        id_opcode.uValue() == RVInstr::BLT ||
++        id_opcode.uValue() == RVInstr::BGE ||
++        id_opcode.uValue() == RVInstr::BLTU ||
++        id_opcode.uValue() == RVInstr::BGEU) {
++      return 0;
++    }
++    const unsigned exidx = ex_reg_wr_idx.uValue();
++    const unsigned idx1 = id_reg1_idx.uValue();
++    const unsigned idx2 = id_reg2_idx.uValue();
++    const bool mrd = ex_do_mem_read_en.uValue();
++
++    return (exidx != 0) && (exidx == idx1 || exidx == idx2) && mrd;
++  }
++
++  bool hasBranchHazard() const{
++    if (id_opcode.uValue() == RVInstr::BEQ ||
++        id_opcode.uValue() == RVInstr::BNE ||
++        id_opcode.uValue() == RVInstr::BLT ||
++        id_opcode.uValue() == RVInstr::BGE ||
++        id_opcode.uValue() == RVInstr::BLTU ||
++        id_opcode.uValue() == RVInstr::BGEU) {
++      const unsigned exidx = ex_reg_wr_idx.uValue();
++      const unsigned memidx = mem_reg_wr_idx.uValue();
++      const unsigned idx1 = id_reg1_idx.uValue();
++      const unsigned idx2 = id_reg2_idx.uValue();
++      if (ex_do_reg_write.uValue() && (exidx != 0) && (exidx == idx1 || exidx == idx2)) {
++        return 1;
++      } else if (mem_do_mem_read_en.uValue() && (memidx != 0) &&
++                 (memidx == idx1 || memidx == idx2)) {
++        return 1;
++      } else {
++        return 0;
++      }
++    } else {
++      return 0;
++    }
++  }
++
++  bool hasJumpHazard() const{
++    if (id_opcode.uValue() == RVInstr::JAL ||
++        id_opcode.uValue() == RVInstr::JALR) {
++      const unsigned exidx = ex_reg_wr_idx.uValue();
++      const unsigned memidx = mem_reg_wr_idx.uValue();
++      const unsigned idx1 = id_reg1_idx.uValue();
++      if (ex_do_reg_write.uValue() && (exidx != 0) && (exidx == idx1)) {
++        return 1;
++      } else if (mem_do_mem_read_en.uValue() && (memidx != 0) && (memidx == idx1)) {
++        return 1;
++      } else {
++        return 0;
++      }
++    } else {
++      return 0;
++    }
+   }
+ 
+   bool hasEcallHazard() const {
+@@ -71,7 +150,7 @@
+     // register file must be performed before handling the ecall. Hence, the
+     // front-end of the pipeline shall be stalled until the remainder of the
+     // pipeline has been cleared and there are no more outstanding writes.
+-    const bool isEcall = opcode.uValue() == RVInstr::ECALL;
++    const bool isEcall = ex_opcode.uValue() == RVInstr::ECALL;
+     return isEcall && (mem_do_reg_write.uValue() || wb_do_reg_write.uValue());
+   }
+ };
